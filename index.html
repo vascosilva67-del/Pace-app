@@ -368,7 +368,7 @@ function GoalsTab({ goals, prs, onAdd, onDelete }) {
       {goals.length === 0 ? <EmptyState icon="🎯" title="Sem objetivos" subtitle="Define uma corrida e tempo alvo." /> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
           {sortedGoals.map((g) => {
-            const std = STANDARD.find((s) => s.key === g.distanceKey);
+            const std = nearestStandard(g.km);
             const currentPR = std ? prs[std.key] : null;
             const daysLeft = Math.ceil((new Date(g.date) - new Date()) / 86400000);
             const gapSecs = currentPR ? currentPR.seconds - g.seconds : null;
@@ -476,23 +476,32 @@ function RaceForm({ onSave, onClose }) {
 function GoalForm({ onSave, onClose }) {
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
-  const [distanceKey, setDistanceKey] = useState("5k");
+  const [distancePreset, setDistancePreset] = useState("5k");
+  const [customKm, setCustomKm] = useState("");
   const [timeStr, setTimeStr] = useState("");
   const [error, setError] = useState("");
   function submit() {
     const secs = parseTime(timeStr);
+    const km = distancePreset === "custom" ? parseFloat(customKm) : STANDARD.find((s) => s.key === distancePreset).km;
     if (!name.trim()) return setError("Dá um nome ao objetivo.");
     if (!date) return setError("Escolhe uma data.");
+    if (!km || km <= 0) return setError("Distância inválida.");
     if (!secs) return setError("Tempo no formato mm:ss ou hh:mm:ss.");
-    const std = STANDARD.find((s) => s.key === distanceKey);
-    onSave({ id: uid(), name: name.trim(), date, distanceKey, km: std.km, seconds: secs });
+    onSave({ id: uid(), name: name.trim(), date, distanceKey: distancePreset === "custom" ? null : distancePreset, km, seconds: secs });
   }
   return (
     <Modal title="Definir objetivo" onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <label><div style={labelStyle()}>Nome</div><input style={fieldStyle()} value={name} onChange={(e) => setName(e.target.value)} placeholder="ex: Sub-1:45 meia" /></label>
         <label><div style={labelStyle()}>Data da corrida</div><input type="date" style={fieldStyle()} value={date} onChange={(e) => setDate(e.target.value)} /></label>
-        <label><div style={labelStyle()}>Distância</div><select style={fieldStyle()} value={distanceKey} onChange={(e) => setDistanceKey(e.target.value)}>{STANDARD.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.km} km)</option>)}</select></label>
+        <label>
+          <div style={labelStyle()}>Distância</div>
+          <select style={fieldStyle()} value={distancePreset} onChange={(e) => setDistancePreset(e.target.value)}>
+            {STANDARD.map((s) => <option key={s.key} value={s.key}>{s.label} ({s.km} km)</option>)}
+            <option value="custom">Personalizada</option>
+          </select>
+        </label>
+        {distancePreset === "custom" && <label><div style={labelStyle()}>Distância em km</div><input style={fieldStyle()} value={customKm} onChange={(e) => setCustomKm(e.target.value)} placeholder="ex: 13" /></label>}
         <label><div style={labelStyle()}>Tempo alvo</div><input style={fieldStyle()} value={timeStr} onChange={(e) => setTimeStr(e.target.value)} placeholder="mm:ss ou hh:mm:ss" /></label>
         {error && <div style={{ color: "#FF4B2B", fontSize: 13 }}>{error}</div>}
         <button onClick={submit} style={{ background: "#FF4B2B", border: "none", color: "#101214", fontWeight: 700, borderRadius: 8, padding: "12px 0", fontSize: 14, cursor: "pointer", marginTop: 4 }}>Guardar</button>
