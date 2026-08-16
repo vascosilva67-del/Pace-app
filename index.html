@@ -381,16 +381,19 @@ function GoalsTab({ goals, prs, onAdd, onDelete }) {
                   </div>
                   <button onClick={() => onDelete(g.id)} style={{ background: "none", border: "none", color: "#5A5F64", cursor: "pointer", fontSize: 15 }}>✕</button>
                 </div>
-                <div style={{ display: "flex", gap: 16, marginTop: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: "#5A5F64", textTransform: "uppercase" }}>Dia da corrida</div>
-                    <div className="mono" style={{ fontSize: 13, marginTop: 2, color: daysLeft < 0 ? "#5A5F64" : "#F2F1ED" }}>{daysLeft < 0 ? "passou" : `${daysLeft}d`}</div>
+                <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ fontSize: 13, color: daysLeft < 0 ? "#5A5F64" : "#F2F1ED" }}>
+                    {daysLeft < 0 ? "A corrida já passou." : `Faltam ${daysLeft} dia${daysLeft === 1 ? "" : "s"} para a corrida.`}
                   </div>
-                  {gapSecs != null && (
-                    <div>
-                      <div style={{ fontSize: 10, color: "#5A5F64", textTransform: "uppercase" }}>Falta para o PR</div>
-                      <div className="mono" style={{ fontSize: 13, marginTop: 2, color: gapSecs > 0 ? "#FFC24B" : "#38D97F" }}>{gapSecs > 0 ? `-${formatTime(gapSecs)}` : "já lá chegaste"}</div>
+                  {currentPR && (
+                    <div style={{ fontSize: 13, color: gapSecs > 0 ? "#FFC24B" : "#38D97F" }}>
+                      {gapSecs > 0
+                        ? `O teu PR de ${std.label} é ${formatTime(currentPR.seconds)} — precisas de correr ${formatTime(gapSecs)} mais rápido para cumprir este objetivo.`
+                        : `Já és mais rápido que o teu PR atual de ${std.label} (${formatTime(currentPR.seconds)}) — este objetivo está ao alcance.`}
                     </div>
+                  )}
+                  {!currentPR && (
+                    <div style={{ fontSize: 13, color: "#5A5F64" }}>Ainda não tens um PR comparável nesta distância.</div>
                   )}
                 </div>
               </div>
