@@ -230,6 +230,30 @@ function sportFromType(t) {
   if (s.includes("run")) return "run";
   return null;
 }
+function daysUntil(iso, now = new Date()) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((parseLocalDate(iso) - today) / 86400000);
+}
+function sessionMinutes(s) { return s.done ? (s.actualMinutes != null ? s.actualMinutes : (s.minutes || 0)) : 0; }
+const SPORT_DIST = { swim: true, bike: true, run: true };
+function toKm(sport, v) { return sport === "swim" ? v / 1000 : v; }
+function fromKm(sport, km) { return sport === "swim" ? Math.round(km * 1000) : +(+km).toFixed(2); }
+function sessionKm(s) { return s.done ? (s.actualKm != null ? s.actualKm : (s.km || 0)) : 0; }
+function sessionLabel(s) {
+  const ps = PLAN_SPORTS[s.sport] || PLAN_SPORTS.run;
+  const hasDist = !!SPORT_DIST[s.sport];
+  const parts = [ps.label];
+  if (s.minutes) parts.push(formatMinutes(s.minutes));
+  if (hasDist && s.km) parts.push(formatDistance(s.sport, s.km));
+  if (s.done) {
+    const real = [];
+    if (s.actualMinutes != null) real.push(formatMinutes(s.actualMinutes));
+    if (hasDist && s.actualKm != null) real.push(formatDistance(s.sport, s.actualKm));
+    if (hasDist && s.actualKm && s.actualMinutes) real.push(formatRate(s.sport, s.actualKm, s.actualMinutes * 60));
+    if (real.length) parts.push("feito " + real.join(" · "));
+  }
+  return parts.join(" · ");
+}
 // ==HELPERS END==
 
 function findHeader(headers, includesArr) {
@@ -310,6 +334,9 @@ function App() {
   const [showImport, setShowImport] = useState(false);
   const [showManualPR, setShowManualPR] = useState(false);
   const [sessionDate, setSessionDate] = useState(null);
+  const [doneId, setDoneId] = useState(null);
+  const [lastBackup, setLastBackup] = useState(() => loadLS("pace_lastBackup", null));
+  const [dismissedBackup, setDismissedBackup] = useState(false);
 
   useEffect(() => { localStorage.setItem("pace_races", JSON.stringify(races)); }, [races]);
   useEffect(() => { localStorage.setItem("pace_goals", JSON.stringify(goals)); }, [goals]);
@@ -332,12 +359,21 @@ function App() {
     });
   }
   function addSession(s) { setPlan((p) => [...p, s]); setSessionDate(null); }
-  function toggleSession(id) { setPlan((p) => p.map((s) => (s.id === id ? { ...s, done: !s.done } : s))); }
+  function toggleSession(id) {
+    const s = plan.find((x) => x.id === id);
+    if (!s) return;
+    if (s.done) setPlan((p) => p.map((x) => (x.id === id ? { ...x, done: false, actualMinutes: null, actualKm: null } : x)));
+    else setDoneId(id);
+  }
+  function completeSession(id, actualMin, actualKm) {
+    setPlan((p) => p.map((x) => (x.id === id ? { ...x, done: true, actualMinutes: actualMin, actualKm: actualKm } : x)));
+    setDoneId(null);
+  }
   function deleteSession(id) { setPlan((p) => p.filter((s) => s.id !== id)); }
   function copyPrevWeek() {
     const prevStart = addDays(weekStart, -7);
     const prevDates = new Set(Array.from({ length: 7 }, (_, i) => localISO(addDays(prevStart, i))));
-    const copies = plan.filter((s) => prevDates.has(s.date)).map((s) => ({ ...s, id: uid(), date: localISO(addDays(parseLocalDate(s.date), 7)), done: false }));
+    const copies = plan.filter((s) => prevDates.has(s.date)).map((s) => ({ ...s, id: uid(), date: localISO(addDays(parseLocalDate(s.date), 7)), done: false, actualMinutes: null, actualKm: null }));
     setPlan((p) => [...p, ...copies]);
   }
 
@@ -348,6 +384,9 @@ function App() {
     const a = document.createElement("a");
     a.href = url; a.download = `pace-backup-${localISO(new Date())}.json`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    const now = new Date().toISOString();
+    try { localStorage.setItem("pace_lastBackup", JSON.stringify(now)); } catch (e) {}
+    setLastBackup(now);
   }
   function restoreBackup(file) {
     const reader = new FileReader();
@@ -363,6 +402,9 @@ function App() {
     reader.readAsText(file);
   }
 
+  const hasData = races.length + goals.length + plan.length + Object.keys(manualPRs).length > 0;
+  const backupAgeDays = lastBackup ? Math.floor((Date.now() - new Date(lastBackup).getTime()) / 86400000) : null;
+  const needsBackup = hasData && !dismissedBackup && (backupAgeDays === null || backupAgeDays >= 14);
   const tabs = [{ key: "races", label: "Provas" }, { key: "prs", label: "PRs" }, { key: "goals", label: "Objetivos" }, { key: "week", label: "Semana" }];
 
   return (
@@ -374,6 +416,13 @@ function App() {
         </div>
         <p style={{ color: "#8B9096", fontSize: 14, marginTop: 0, marginBottom: 24 }}>Guardado neste telemóvel.</p>
 
+        {needsBackup && (
+          <div style={{ background: "#FFC24B14", border: "1px solid #FFC24B55", borderRadius: 12, padding: "12px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, fontSize: 13, lineHeight: 1.4 }}>{backupAgeDays === null ? "Ainda não exportaste um backup dos teus dados." : `O teu último backup foi há ${backupAgeDays} dias.`}</div>
+            <button onClick={exportBackup} style={{ background: "#FFC24B", border: "none", color: "#101214", fontWeight: 700, borderRadius: 8, padding: "8px 12px", fontSize: 12, cursor: "pointer" }}>Exportar</button>
+            <button onClick={() => setDismissedBackup(true)} style={{ background: "none", border: "none", color: "#8B9096", cursor: "pointer", fontSize: 16 }}>✕</button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 4, background: "#1A1D21", padding: 4, borderRadius: 10, marginBottom: 24 }}>
           {tabs.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{ flex: 1, padding: "9px 0", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: tab === t.key ? "#FF4B2B" : "transparent", color: tab === t.key ? "#101214" : "#8B9096" }}>{t.label}</button>
@@ -383,7 +432,7 @@ function App() {
         {tab === "races" && <RacesTab races={races} filter={sportFilter} setFilter={setSportFilter} prs={prs} prList={prList} onAdd={() => setShowRaceForm(true)} onImport={() => setShowImport(true)} onDelete={deleteRace} />}
         {tab === "prs" && <PrsTab sport={prSport} setSport={setPrSport} prList={prList} races={races} onEditManual={() => setShowManualPR(true)} />}
         {tab === "goals" && <GoalsTab goals={goals} prs={prs} onAdd={() => setShowGoalForm(true)} onDelete={deleteGoal} />}
-        {tab === "week" && <WeekTab plan={plan} weekStart={weekStart} setWeekStart={setWeekStart} onAdd={(d) => setSessionDate(d)} onToggle={toggleSession} onDelete={deleteSession} onCopyPrev={copyPrevWeek} />}
+        {tab === "week" && <WeekTab goals={goals} plan={plan} weekStart={weekStart} setWeekStart={setWeekStart} onAdd={(d) => setSessionDate(d)} onToggle={toggleSession} onDelete={deleteSession} onCopyPrev={copyPrevWeek} />}
 
         <BackupBar onExport={exportBackup} onRestore={restoreBackup} />
       </div>
@@ -393,6 +442,7 @@ function App() {
       {showImport && <ImportModal onSave={addRaces} onClose={() => setShowImport(false)} />}
       {showManualPR && prSport !== "tri" && <ManualPRModal sport={prSport} manualPRs={manualPRs} races={races} onSave={setManualPR} onClose={() => setShowManualPR(false)} />}
       {sessionDate && <SessionForm date={sessionDate} onSave={addSession} onClose={() => setSessionDate(null)} />}
+      {doneId && plan.find((x) => x.id === doneId) && <DoneModal session={plan.find((x) => x.id === doneId)} onSave={completeSession} onClose={() => setDoneId(null)} />}
     </div>
   );
 }
@@ -575,7 +625,7 @@ function GoalsTab({ goals, prs, onAdd, onDelete }) {
             const sport = g.sport || "run";
             const sp = SPORTS[sport] || SPORTS.run;
             const { label, pr } = prForGoal(g, prs);
-            const daysLeft = Math.ceil((new Date(g.date) - new Date()) / 86400000);
+            const daysLeft = daysUntil(g.date);
             const gapSecs = pr ? pr.seconds - g.seconds : null;
             const distText = sport === "tri" ? triFormat(g.triFormat).label : (label || formatDistance(sport, g.km));
             return (
@@ -589,7 +639,7 @@ function GoalsTab({ goals, prs, onAdd, onDelete }) {
                 </div>
                 <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
                   <div style={{ fontSize: 13, color: daysLeft < 0 ? "#5A5F64" : "#F2F1ED" }}>
-                    {daysLeft < 0 ? "A prova já passou." : `Faltam ${daysLeft} dia${daysLeft === 1 ? "" : "s"} para a prova.`}
+                    {daysLeft < 0 ? "A prova já passou." : daysLeft === 0 ? "A prova é hoje." : `Faltam ${daysLeft} dia${daysLeft === 1 ? "" : "s"} para a prova.`}
                   </div>
                   {pr ? (
                     <div style={{ fontSize: 13, color: gapSecs > 0 ? "#FFC24B" : "#38D97F" }}>
@@ -610,7 +660,7 @@ function GoalsTab({ goals, prs, onAdd, onDelete }) {
   );
 }
 
-function WeekTab({ plan, weekStart, setWeekStart, onAdd, onToggle, onDelete, onCopyPrev }) {
+function WeekTab({ goals, plan, weekStart, setWeekStart, onAdd, onToggle, onDelete, onCopyPrev }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const isoDays = days.map(localISO);
   const todayISO = localISO(new Date());
@@ -619,8 +669,16 @@ function WeekTab({ plan, weekStart, setWeekStart, onAdd, onToggle, onDelete, onC
   const prevCount = plan.filter((s) => prevISO.includes(s.date)).length;
   const doneCount = weekSessions.filter((s) => s.done).length;
   const plannedMin = weekSessions.reduce((s, x) => s + (x.minutes || 0), 0);
+  const doneMin = weekSessions.reduce((s, x) => s + sessionMinutes(x), 0);
   const bySport = {};
-  weekSessions.forEach((s) => { bySport[s.sport] = (bySport[s.sport] || 0) + (s.minutes || 0); });
+  weekSessions.forEach((s) => {
+    const b = bySport[s.sport] || { planned: 0, done: 0, km: 0 };
+    b.planned += s.minutes || 0;
+    b.done += sessionMinutes(s);
+    b.km += sessionKm(s);
+    bySport[s.sport] = b;
+  });
+  const nextGoal = [...goals].filter((g) => daysUntil(g.date) >= 0).sort((a, b) => parseLocalDate(a.date) - parseLocalDate(b.date))[0];
   const fmt = (d) => `${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`;
   const isThisWeek = isoDays.includes(todayISO);
   const navBtn = { background: "#1A1D21", border: "1px solid #2A2E33", color: "#F2F1ED", borderRadius: 8, width: 36, height: 36, cursor: "pointer", fontSize: 16 };
@@ -635,14 +693,27 @@ function WeekTab({ plan, weekStart, setWeekStart, onAdd, onToggle, onDelete, onC
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} style={navBtn}>›</button>
       </div>
 
+      {nextGoal && (() => {
+        const d = daysUntil(nextGoal.date);
+        const gsp = SPORTS[nextGoal.sport || "run"] || SPORTS.run;
+        return (
+          <div style={{ background: "#1A1D21", border: "1px solid #2A2E33", borderLeft: `3px solid ${gsp.color}`, borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: "#8B9096", fontWeight: 600, textTransform: "uppercase" }}>Próxima prova</div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginTop: 4 }}>{gsp.icon} {nextGoal.name}</div>
+            <div style={{ fontSize: 12, color: "#8B9096", marginTop: 3 }}>{d === 0 ? "hoje" : d === 1 ? "amanhã" : `em ${d} dias`} · alvo {formatTime(nextGoal.seconds)}</div>
+          </div>
+        );
+      })()}
+
       <div style={{ background: "#1A1D21", border: "1px solid #2A2E33", borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
         <div style={{ fontSize: 13 }}>
-          {weekSessions.length === 0 ? "Sem treinos planeados nesta semana." : `${doneCount} de ${weekSessions.length} treinos concluídos · ${formatMinutes(plannedMin)} planeados`}
+          {weekSessions.length === 0 ? "Sem treinos planeados nesta semana." : `${doneCount} de ${weekSessions.length} treinos concluídos`}
         </div>
+        {weekSessions.length > 0 && <div className="mono" style={{ fontSize: 12, color: "#8B9096", marginTop: 4 }}>feito {formatMinutes(doneMin)} · planeado {formatMinutes(plannedMin)}</div>}
         {Object.keys(bySport).length > 0 && (
           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
             {Object.keys(bySport).map((k) => (
-              <span key={k} className="chip" style={{ color: PLAN_SPORTS[k].color, borderColor: PLAN_SPORTS[k].color + "55" }}>{PLAN_SPORTS[k].label} {formatMinutes(bySport[k])}</span>
+              <span key={k} className="chip" style={{ color: PLAN_SPORTS[k].color, borderColor: PLAN_SPORTS[k].color + "55" }}>{PLAN_SPORTS[k].label} {formatMinutes(bySport[k].done)} / {formatMinutes(bySport[k].planned)}{bySport[k].km > 0 ? ` · ${formatDistance(k, bySport[k].km)}` : ""}</span>
             ))}
           </div>
         )}
@@ -672,7 +743,7 @@ function WeekTab({ plan, weekStart, setWeekStart, onAdd, onToggle, onDelete, onC
                         <button onClick={() => onToggle(s.id)} style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${ps.color}`, background: s.done ? ps.color : "transparent", cursor: "pointer", flexShrink: 0, color: "#101214", fontSize: 13, fontWeight: 700, lineHeight: 1 }}>{s.done ? "✓" : ""}</button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 14, textDecoration: s.done ? "line-through" : "none" }}>{s.title}</div>
-                          <div style={{ fontSize: 11, color: ps.color, marginTop: 1 }}>{ps.label}{s.minutes ? ` · ${formatMinutes(s.minutes)}` : ""}</div>
+                          <div style={{ fontSize: 11, color: ps.color, marginTop: 1 }}>{sessionLabel(s)}</div>
                         </div>
                         <button onClick={() => onDelete(s.id)} style={{ background: "none", border: "none", color: "#5A5F64", cursor: "pointer", fontSize: 14 }}>✕</button>
                       </div>
@@ -939,16 +1010,22 @@ function SessionForm({ date, onSave, onClose }) {
   const [sport, setSport] = useState("run");
   const [title, setTitle] = useState("");
   const [minutes, setMinutes] = useState("");
+  const [dist, setDist] = useState("");
   const [d, setD] = useState(date);
+  const [alreadyDone, setAlreadyDone] = useState(false);
   const [error, setError] = useState("");
+  const hasDist = !!SPORT_DIST[sport];
   function submit() {
     const m = minutes.trim() ? num(minutes) : null;
     if (minutes.trim() && (!m || m <= 0)) return setError("Duração inválida (em minutos).");
+    const v = hasDist && dist.trim() ? num(dist) : null;
+    if (hasDist && dist.trim() && (!v || v <= 0)) return setError("Distância inválida.");
     if (!d) return setError("Escolhe um dia.");
-    onSave({ id: uid(), date: d, sport, title: title.trim() || PLAN_SPORTS[sport].label, minutes: m, done: false });
+    const km = v ? toKm(sport, v) : null;
+    onSave({ id: uid(), date: d, sport, title: title.trim() || PLAN_SPORTS[sport].label, minutes: m, km, done: alreadyDone, actualMinutes: alreadyDone ? m : null, actualKm: alreadyDone ? km : null });
   }
   return (
-    <Modal title="Agendar treino" onClose={onClose}>
+    <Modal title={alreadyDone ? "Registar treino" : "Agendar treino"} onClose={onClose}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div className="scrollx" style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
           {Object.keys(PLAN_SPORTS).map((k) => {
@@ -958,10 +1035,49 @@ function SessionForm({ date, onSave, onClose }) {
           })}
         </div>
         <label><div style={labelStyle()}>Treino</div><input style={fieldStyle()} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="ex: 10x100 ritmo de prova" /></label>
-        <label><div style={labelStyle()}>Duração (minutos, opcional)</div><input style={fieldStyle()} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="ex: 60" /></label>
+        <div style={{ display: "flex", gap: 10 }}>
+          <label style={{ flex: 1 }}><div style={labelStyle()}>{alreadyDone ? "Duração (min)" : "Duração planeada (min)"}</div><input style={fieldStyle()} inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="opcional" /></label>
+          {hasDist && <label style={{ flex: 1 }}><div style={labelStyle()}>{alreadyDone ? "Distância" : "Distância planeada"} ({sport === "swim" ? "m" : "km"})</div><input style={fieldStyle()} inputMode="decimal" value={dist} onChange={(e) => setDist(e.target.value)} placeholder="opcional" /></label>}
+        </div>
         <label><div style={labelStyle()}>Dia</div><input type="date" style={fieldStyle()} value={d} onChange={(e) => setD(e.target.value)} /></label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={alreadyDone} onChange={(e) => setAlreadyDone(e.target.checked)} />
+          <span style={{ fontSize: 13, color: "#8B9096" }}>Já fiz este treino (conta como feito)</span>
+        </label>
         {error && <div style={{ color: "#FF4B2B", fontSize: 13 }}>{error}</div>}
-        <SaveButton onClick={submit}>Agendar</SaveButton>
+        <SaveButton onClick={submit}>{alreadyDone ? "Registar" : "Agendar"}</SaveButton>
+      </div>
+    </Modal>
+  );
+}
+
+function DoneModal({ session, onSave, onClose }) {
+  const hasDist = !!SPORT_DIST[session.sport];
+  const [val, setVal] = useState(session.minutes ? String(session.minutes) : "");
+  const [dist, setDist] = useState(hasDist && session.km ? String(fromKm(session.sport, session.km)) : "");
+  const [error, setError] = useState("");
+  function submit() {
+    const m = val.trim() ? num(val) : null;
+    if (val.trim() && (!m || m <= 0)) return setError("Duração inválida (em minutos).");
+    const v = hasDist && dist.trim() ? num(dist) : null;
+    if (hasDist && dist.trim() && (!v || v <= 0)) return setError("Distância inválida.");
+    onSave(session.id, m, v ? toKm(session.sport, v) : null);
+  }
+  const ps = PLAN_SPORTS[session.sport] || PLAN_SPORTS.run;
+  return (
+    <Modal title="Treino concluído" onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>{session.title}</div>
+          <div style={{ fontSize: 12, color: ps.color, marginTop: 2 }}>{sessionLabel(session)}</div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <label style={{ flex: 1 }}><div style={labelStyle()}>Duração real (min)</div><input style={fieldStyle()} inputMode="numeric" value={val} onChange={(e) => setVal(e.target.value)} placeholder="ex: 55" /></label>
+          {hasDist && <label style={{ flex: 1 }}><div style={labelStyle()}>Distância real ({session.sport === "swim" ? "m" : "km"})</div><input style={fieldStyle()} inputMode="decimal" value={dist} onChange={(e) => setDist(e.target.value)} placeholder={session.sport === "swim" ? "ex: 1500" : "ex: 10,5"} /></label>}
+        </div>
+        <div style={{ fontSize: 12, color: "#5A5F64", marginTop: -6 }}>Em branco, conta o que estava planeado.</div>
+        {error && <div style={{ color: "#FF4B2B", fontSize: 13 }}>{error}</div>}
+        <SaveButton onClick={submit}>Concluir</SaveButton>
       </div>
     </Modal>
   );
